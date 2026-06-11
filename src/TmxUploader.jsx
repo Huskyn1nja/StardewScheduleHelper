@@ -72,11 +72,21 @@ const TmxUploader = () => {
   const [aliasFile, setAliasFile] = useState("");
   const [unresolvedWarp, setUnresolvedWarp] = useState(null);
 
+  const [customWarps, setCustomWarps] = useState([]);
+  const [warpFromMap, setWarpFromMap] = useState("");
+  const [warpFromX, setWarpFromX] = useState("");
+  const [warpFromY, setWarpFromY] = useState("");
+  const [warpToMap, setWarpToMap] = useState("");
+  const [warpToX, setWarpToX] = useState("");
+  const [warpToY, setWarpToY] = useState("");
+
   const [searchTerm, setSearchTerm] = useState("");
   const [repoSearchTerm, setRepoSearchTerm] = useState("");
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [activeTab, setActiveTab] = useState("workspace");
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [sidebarWidth, setSidebarWidth] = useState(450);
+  const [isResizing, setIsResizing] = useState(false);
 
   const canvasRef = useRef(null);
   const loadingImagesRef = useRef(new Set());
@@ -95,31 +105,290 @@ const TmxUploader = () => {
     }
     return id;
   };
-
   const calculateDistance = (fromNode, toNode) => {
-    const actualFromId = resolveMapId(fromNode.mapId);
-    const actualToId = resolveMapId(toNode.mapId);
+    const startMap = resolveMapId(fromNode.mapId);
+    const endMap = resolveMapId(toNode.mapId);
+    const TILE_TIME = 1.35;
 
-    if (actualFromId === actualToId) {
-      return Math.abs(toNode.x - fromNode.x) + Math.abs(toNode.y - fromNode.y);
+    if (startMap.toLowerCase() === endMap.toLowerCase()) {
+      return Math.floor(
+        (Math.abs(toNode.x - fromNode.x) + Math.abs(toNode.y - fromNode.y)) *
+          TILE_TIME
+      );
     }
-    const prevMapData = maps[actualFromId];
-    if (prevMapData?.mapWarps) {
-      for (const portal of prevMapData.mapWarps) {
-        const target = resolveMapId(portal.targetMap);
-        if (target.toLowerCase() === actualToId.toLowerCase()) {
-          return (
-            Math.abs(portal.x - fromNode.x) +
-            Math.abs(portal.y - fromNode.y) +
-            (Math.abs(toNode.x - portal.destX) +
-              Math.abs(toNode.y - portal.destY)) +
-            15
-          );
+
+    const pq = [{ cost: 0, mapId: startMap, x: fromNode.x, y: fromNode.y }];
+    const bestCost = {};
+    let finalCost = Infinity;
+    let iterations = 0;
+
+    while (pq.length > 0 && iterations < 10000) {
+      iterations++;
+      pq.sort((a, b) => a.cost - b.cost);
+      const curr = pq.shift();
+
+      const stateKey = `${curr.mapId}_${curr.x}_${curr.y}`;
+      if (bestCost[stateKey] !== undefined && bestCost[stateKey] < curr.cost)
+        continue;
+      bestCost[stateKey] = curr.cost;
+
+      if (curr.mapId.toLowerCase() === endMap.toLowerCase()) {
+        const costToEnd =
+          curr.cost +
+          (Math.abs(toNode.x - curr.x) + Math.abs(toNode.y - curr.y)) *
+            TILE_TIME;
+        if (costToEnd < finalCost) finalCost = costToEnd;
+        continue;
+      }
+
+      const mapKey = Object.keys(maps).find(
+        (k) => k.toLowerCase() === curr.mapId.toLowerCase()
+      );
+      const mapData = mapKey ? maps[mapKey] : null;
+
+      let warps = mapData && mapData.mapWarps ? [...mapData.mapWarps] : [];
+
+      const lowerMapId = curr.mapId.toLowerCase();
+      const lowerStartMap = startMap.toLowerCase();
+      const lowerEndMap = endMap.toLowerCase();
+
+      if (lowerMapId.includes("farmhouse")) {
+        warps.push({ x: 9, y: 11, targetMap: "BusStop", destX: 10, destY: 23 });
+      } else if (lowerMapId === "busstop") {
+        let targetFarmhouse = "FarmHouse";
+        if (lowerStartMap.includes("farmhouse")) targetFarmhouse = startMap;
+        else if (lowerEndMap.includes("farmhouse")) targetFarmhouse = endMap;
+
+        warps.push({
+          x: 9,
+          y: 23,
+          targetMap: targetFarmhouse,
+          destX: 9,
+          destY: 11,
+        });
+      }
+
+      customWarps.forEach((cw) => {
+        if (cw.fromMap.toLowerCase() === lowerMapId) {
+          warps.push({
+            x: cw.fromX,
+            y: cw.fromY,
+            targetMap: cw.targetMap,
+            destX: cw.destX,
+            destY: cw.destY,
+          });
+        }
+        if (cw.targetMap.toLowerCase() === lowerMapId) {
+          warps.push({
+            x: cw.destX,
+            y: cw.destY,
+            targetMap: cw.fromMap,
+            destX: cw.fromX,
+            destY: cw.fromY,
+          });
+        }
+      });
+
+      for (const portal of warps) {
+        const targetMap = resolveMapId(portal.targetMap);
+        const walkDist =
+          Math.abs(portal.x - curr.x) + Math.abs(portal.y - curr.y);
+        const nextCost = curr.cost + walkDist * TILE_TIME + 2;
+
+        const nextKey = `${targetMap}_${portal.destX}_${portal.destY}`;
+
+        if (bestCost[nextKey] === undefined || nextCost < bestCost[nextKey]) {
+          bestCost[nextKey] = nextCost;
+          pq.push({
+            cost: nextCost,
+            mapId: targetMap,
+            x: portal.destX,
+            y: portal.destY,
+          });
         }
       }
     }
-    return 35;
+
+    return finalCost;
   };
+
+  const addScheduleNode = () => {
+    if (!clickedCoord) return;
+
+    let formattedTime = draftTime.toString().replace(/\D/g, "");
+    let timeInt = parseInt(formattedTime, 10);
+    if (isNaN(timeInt)) timeInt = 610;
+
+    let m = timeInt % 100;
+    let h = Math.floor(timeInt / 100);
+    if (m >= 60) {
+      h += Math.floor(m / 60);
+      m = m % 60;
+    }
+    m = Math.ceil(m / 10) * 10;
+    if (m === 60) {
+      h += 1;
+      m = 0;
+    }
+    formattedTime = `${String(h).padStart(2, "0")}${String(m).padStart(
+      2,
+      "0"
+    )}`;
+
+    const newNode = {
+      time: formattedTime,
+      mapId: clickedCoord.mapId,
+      x: clickedCoord.x,
+      y: clickedCoord.y,
+      direction: draftDirection,
+      animation: draftAnimation.trim(),
+      dialogue: draftDialogue.trim(),
+    };
+
+    const updatedNodes = [...scheduleNodes, newNode].sort(
+      (a, b) => parseInt(a.time) - parseInt(b.time)
+    );
+    setSchedules((prev) => ({ ...prev, [activeScheduleKey]: updatedNodes }));
+
+    const nodeIndex = updatedNodes.findIndex((n) => n === newNode);
+    let prevNode;
+    if (nodeIndex === 0) {
+      prevNode = {
+        mapId: homeMapId || newNode.mapId,
+        x: homeMapId ? homeX : newNode.x,
+        y: homeMapId ? homeY : newNode.y,
+      };
+    } else {
+      prevNode = updatedNodes[nodeIndex - 1];
+    }
+
+    const currTimeRaw = parseInt(newNode.time, 10);
+    const departureMinutes =
+      Math.floor(currTimeRaw / 100) * 60 + (currTimeRaw % 100);
+    const travelTime = calculateDistance(prevNode, newNode);
+    const safeTravelTime = travelTime === Infinity ? 120 : travelTime;
+
+    let totalArrivalMinutes = departureMinutes + safeTravelTime;
+    totalArrivalMinutes = Math.ceil(totalArrivalMinutes / 10) * 10;
+    totalArrivalMinutes += 10;
+
+    const nextHour = Math.floor(totalArrivalMinutes / 60);
+    const nextMin = totalArrivalMinutes % 60;
+    const nextTimeString = `${String(nextHour).padStart(2, "0")}${String(
+      nextMin
+    ).padStart(2, "0")}`;
+
+    setDraftTime(nextTimeString);
+    setDraftAnimation("");
+    setDraftDialogue("");
+  };
+
+  const getArrivalEstimate = (index) => {
+    const currNode = scheduleNodes[index];
+    let prevNode;
+
+    if (index === 0) {
+      prevNode = {
+        mapId: homeMapId || currNode.mapId,
+        x: homeMapId ? homeX : currNode.x,
+        y: homeMapId ? homeY : currNode.y,
+      };
+    } else {
+      prevNode = scheduleNodes[index - 1];
+    }
+
+    const currTimeRaw = parseInt(currNode.time, 10);
+    const departureMinutes =
+      Math.floor(currTimeRaw / 100) * 60 + (currTimeRaw % 100);
+    const travelTime = calculateDistance(prevNode, currNode);
+
+    if (travelTime === Infinity) {
+      return { error: true, msg: "Path Broken!" };
+    }
+
+    let totalArrivalMinutes = departureMinutes + travelTime;
+    totalArrivalMinutes = Math.ceil(totalArrivalMinutes / 10) * 10;
+
+    const arrivalHour = Math.floor(totalArrivalMinutes / 60);
+    const arrivalMin = totalArrivalMinutes % 60;
+    const timeString = `${String(arrivalHour).padStart(2, "0")}${String(
+      arrivalMin
+    ).padStart(2, "0")}`;
+
+    return { error: false, msg: `Arrival: ${timeString}` };
+  };
+  const handleFixLink = async (index) => {
+    const currNode = scheduleNodes[index];
+    let prevNode;
+
+    if (index === 0) {
+      prevNode = {
+        mapId: homeMapId || currNode.mapId,
+        x: homeMapId ? homeX : currNode.x,
+        y: homeMapId ? homeY : currNode.y,
+      };
+    } else {
+      prevNode = scheduleNodes[index - 1];
+    }
+
+    const pMap = resolveMapId(prevNode?.mapId) || "";
+    const cMap = resolveMapId(currNode?.mapId) || "";
+
+    const toLoadFiles = [];
+    const currentLoadedKeys = Object.keys(maps).map((k) => k.toLowerCase());
+
+    [pMap, cMap].forEach((m) => {
+      if (!m) return;
+      const t = m.toLowerCase();
+      if (!currentLoadedKeys.includes(t)) {
+        const repoKey = Object.keys(assetRepo).find(
+          (k) => k.toLowerCase() === t + ".tmx"
+        );
+        if (repoKey && !toLoadFiles.includes(assetRepo[repoKey])) {
+          toLoadFiles.push(assetRepo[repoKey]);
+        }
+      }
+    });
+
+    if (toLoadFiles.length > 0) {
+      await processTmxFiles(toLoadFiles);
+      return;
+    }
+
+    if (!maps[pMap] && pMap) {
+      setUnresolvedWarp(pMap);
+    } else if (!maps[cMap] && cMap) {
+      setUnresolvedWarp(cMap);
+    } else {
+      alert(
+        "Path blocked! The start and end maps are loaded, but no valid warp path connects them. Ensure intermediate connecting maps are dragged into the Workspace."
+      );
+    }
+  };
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e) => {
+      const newWidth = window.innerWidth - e.clientX - 16;
+      if (newWidth >= 300 && newWidth <= 1200) {
+        setSidebarWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    document.body.style.userSelect = "none";
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      document.body.style.userSelect = "";
+    };
+  }, [isResizing]);
   const handleFolderSelect = (event) => {
     const files = Array.from(event.target.files);
     if (files.length === 0) return;
@@ -374,6 +643,8 @@ const TmxUploader = () => {
       if (config.mapAliases) setMapAliases(config.mapAliases);
       if (config.schedules) setSchedules(config.schedules);
       if (config.homeMapId) setHomeMapId(config.homeMapId);
+      if (config.homeY !== undefined) setHomeY(config.homeY);
+      if (config.customWarps) setCustomWarps(config.customWarps);
       if (config.homeX !== undefined) setHomeX(config.homeX);
       if (config.homeY !== undefined) setHomeY(config.homeY);
 
@@ -554,7 +825,7 @@ const TmxUploader = () => {
     setActiveScheduleKey(cleanKey);
     setNewScheduleInput("");
   };
-  const handleImportSchedule = () => {
+  const handleImportSchedule = async () => {
     const cleanInput = importInput.trim();
     if (!cleanInput) return;
 
@@ -689,6 +960,33 @@ const TmxUploader = () => {
         }
       }
       setImportInput("");
+
+      const requiredMapIds = new Set();
+      Object.values(newSchedules).forEach((nodes) => {
+        nodes.forEach((node) => {
+          requiredMapIds.add(node.mapId);
+        });
+      });
+
+      const filesToLoad = [];
+      const currentLoaded = Object.keys(maps).map((k) => k.toLowerCase());
+
+      for (const reqMap of requiredMapIds) {
+        const resolved = resolveMapId(reqMap);
+        if (!currentLoaded.includes(resolved.toLowerCase())) {
+          const repoKey = Object.keys(assetRepo).find(
+            (k) => k.toLowerCase() === resolved.toLowerCase() + ".tmx"
+          );
+          if (repoKey) {
+            filesToLoad.push(assetRepo[repoKey]);
+          }
+        }
+      }
+
+      if (filesToLoad.length > 0) {
+        await processTmxFiles(filesToLoad);
+      }
+
       alert(`Imported ${importedCount} checkpoints successfully!`);
     } else {
       alert(
@@ -715,76 +1013,6 @@ const TmxUploader = () => {
       m = 0;
     }
     setDraftTime(`${String(h).padStart(2, "0")}${String(m).padStart(2, "0")}`);
-  };
-
-  const addScheduleNode = () => {
-    if (!clickedCoord) return;
-
-    let formattedTime = draftTime.toString().replace(/\D/g, "");
-    let timeInt = parseInt(formattedTime, 10);
-    if (isNaN(timeInt)) timeInt = 610;
-
-    let m = timeInt % 100;
-    let h = Math.floor(timeInt / 100);
-    if (m >= 60) {
-      h += Math.floor(m / 60);
-      m = m % 60;
-    }
-    m = Math.ceil(m / 10) * 10;
-    if (m === 60) {
-      h += 1;
-      m = 0;
-    }
-    formattedTime = `${String(h).padStart(2, "0")}${String(m).padStart(
-      2,
-      "0"
-    )}`;
-
-    const newNode = {
-      time: formattedTime,
-      mapId: clickedCoord.mapId,
-      x: clickedCoord.x,
-      y: clickedCoord.y,
-      direction: draftDirection,
-      animation: draftAnimation.trim(),
-      dialogue: draftDialogue.trim(),
-    };
-
-    const updatedNodes = [...scheduleNodes, newNode].sort(
-      (a, b) => parseInt(a.time) - parseInt(b.time)
-    );
-    setSchedules((prev) => ({ ...prev, [activeScheduleKey]: updatedNodes }));
-
-    const nodeIndex = updatedNodes.findIndex((n) => n === newNode);
-    let prevNode;
-    if (nodeIndex === 0) {
-      prevNode = {
-        mapId: homeMapId || newNode.mapId,
-        x: homeMapId ? homeX : newNode.x,
-        y: homeMapId ? homeY : newNode.y,
-      };
-    } else {
-      prevNode = updatedNodes[nodeIndex - 1];
-    }
-
-    const currTimeRaw = parseInt(newNode.time, 10);
-    const departureMinutes =
-      Math.floor(currTimeRaw / 100) * 60 + (currTimeRaw % 100);
-    const travelTime = calculateDistance(prevNode, newNode);
-
-    let totalArrivalMinutes = departureMinutes + travelTime;
-    totalArrivalMinutes = Math.ceil(totalArrivalMinutes / 10) * 10;
-    totalArrivalMinutes += 10;
-
-    const nextHour = Math.floor(totalArrivalMinutes / 60);
-    const nextMin = totalArrivalMinutes % 60;
-    const nextTimeString = `${String(nextHour).padStart(2, "0")}${String(
-      nextMin
-    ).padStart(2, "0")}`;
-
-    setDraftTime(nextTimeString);
-    setDraftAnimation("");
-    setDraftDialogue("");
   };
 
   const updateScheduleNode = (index, field, value) => {
@@ -814,6 +1042,40 @@ const TmxUploader = () => {
     }
   };
 
+  const addCustomWarp = () => {
+    if (warpFromMap.trim() && warpToMap.trim()) {
+      setCustomWarps((prev) => [
+        ...prev,
+        {
+          fromMap: warpFromMap.trim(),
+          fromX: parseInt(warpFromX, 10) || 0,
+          fromY: parseInt(warpFromY, 10) || 0,
+          targetMap: warpToMap.trim(),
+          destX: parseInt(warpToX, 10) || 0,
+          destY: parseInt(warpToY, 10) || 0,
+        },
+      ]);
+      setWarpFromMap("");
+      setWarpFromX("");
+      setWarpFromY("");
+      setWarpToMap("");
+      setWarpToX("");
+      setWarpToY("");
+    }
+  };
+
+  const removeCustomWarp = (idx) => {
+    setCustomWarps((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const updateCustomWarp = (index, field, value) => {
+    setCustomWarps((prev) => {
+      const newWarps = [...prev];
+      newWarps[index] = { ...newWarps[index], [field]: value };
+      return newWarps;
+    });
+  };
+
   const exportProjectConfig = () => {
     const config = {
       homeMapId,
@@ -821,6 +1083,7 @@ const TmxUploader = () => {
       homeY,
       mapAliases,
       schedules,
+      customWarps,
     };
     const blob = new Blob([JSON.stringify(config, null, 2)], {
       type: "application/json",
@@ -864,37 +1127,6 @@ const TmxUploader = () => {
     return dialogueLines.join(",\n");
   }, [scheduleNodes]);
 
-  const getArrivalEstimate = (index) => {
-    const currNode = scheduleNodes[index];
-    let prevNode;
-
-    if (index === 0) {
-      prevNode = {
-        mapId: homeMapId || currNode.mapId,
-        x: homeMapId ? homeX : currNode.x,
-        y: homeMapId ? homeY : currNode.y,
-      };
-    } else {
-      prevNode = scheduleNodes[index - 1];
-    }
-
-    const currTimeRaw = parseInt(currNode.time, 10);
-    const departureMinutes =
-      Math.floor(currTimeRaw / 100) * 60 + (currTimeRaw % 100);
-    const travelTime = calculateDistance(prevNode, currNode);
-
-    let totalArrivalMinutes = departureMinutes + travelTime;
-    totalArrivalMinutes = Math.ceil(totalArrivalMinutes / 10) * 10;
-
-    const arrivalHour = Math.floor(totalArrivalMinutes / 60);
-    const arrivalMin = totalArrivalMinutes % 60;
-    const timeString = `${String(arrivalHour).padStart(2, "0")}${String(
-      arrivalMin
-    ).padStart(2, "0")}`;
-
-    return `Arrival: ${timeString}`;
-  };
-
   const copyToClipboard = (textToCopy) => {
     if (!textToCopy) return;
     navigator.clipboard.writeText(textToCopy).then(() => {
@@ -906,92 +1138,6 @@ const TmxUploader = () => {
     setClickedCoord(null);
     setTileWarning(null);
   }, [activeMapId]);
-
-  useEffect(() => {
-    if (!clickedCoord || !draftTime) {
-      setTimeWarning(null);
-      return;
-    }
-
-    const parsedDraftTime = parseInt(draftTime, 10);
-    if (isNaN(parsedDraftTime)) {
-      setTimeWarning(null);
-      return;
-    }
-
-    const draftMinutes =
-      Math.floor(parsedDraftTime / 100) * 60 + (parsedDraftTime % 100);
-
-    let prevNode = null;
-    let nextNode = null;
-    let prevNodeIdx = -1;
-
-    const sortedExisting = [...scheduleNodes].sort(
-      (a, b) => parseInt(a.time, 10) - parseInt(b.time, 10)
-    );
-
-    for (let i = 0; i < sortedExisting.length; i++) {
-      const t = parseInt(sortedExisting[i].time, 10);
-      const m = Math.floor(t / 100) * 60 + (t % 100);
-      if (m <= draftMinutes) {
-        prevNode = sortedExisting[i];
-        prevNodeIdx = i;
-      } else {
-        nextNode = sortedExisting[i];
-        break;
-      }
-    }
-
-    let timeWarnStr = null;
-
-    if (nextNode) {
-      const currentLegTravel = calculateDistance(
-        { mapId: clickedCoord.mapId, x: clickedCoord.x, y: clickedCoord.y },
-        nextNode
-      );
-      const nextMins =
-        Math.floor(parseInt(nextNode.time, 10) / 100) * 60 +
-        (parseInt(nextNode.time, 10) % 100);
-      const availableWindow = nextMins - draftMinutes;
-      if (availableWindow < currentLegTravel) {
-        timeWarnStr = `Rush Warning: Moving from this draft to the NEXT event at ${nextNode.time} takes ~${currentLegTravel}m, but you only have ${availableWindow}m.`;
-      }
-    }
-
-    if (prevNode && prevNodeIdx !== -1 && !timeWarnStr) {
-      const prevTimeRaw = parseInt(prevNode.time, 10);
-      const prevMins = Math.floor(prevTimeRaw / 100) * 60 + (prevTimeRaw % 100);
-
-      if (draftMinutes > prevMins) {
-        let prevPredecessor =
-          prevNodeIdx > 0 ? sortedExisting[prevNodeIdx - 1] : null;
-        if (!prevPredecessor) {
-          prevPredecessor = {
-            mapId: homeMapId || prevNode.mapId,
-            x: homeMapId ? homeX : prevNode.x,
-            y: homeMapId ? homeY : prevNode.y,
-          };
-        }
-        const prevLegTravel = calculateDistance(prevPredecessor, prevNode);
-        const allowedWindowForPrev = draftMinutes - prevMins;
-
-        if (allowedWindowForPrev < prevLegTravel) {
-          timeWarnStr = `Rush Warning: Traveling from the PREVIOUS leg at ${prevNode.time} takes ~${prevLegTravel}m, but you only allowed ${allowedWindowForPrev}m before this node begins.`;
-        }
-      }
-    }
-
-    setTimeWarning(timeWarnStr);
-  }, [
-    draftTime,
-    clickedCoord,
-    scheduleNodes,
-    homeMapId,
-    homeX,
-    homeY,
-    mapAliases,
-    maps,
-  ]);
 
   useEffect(() => {
     const requiredImageNames = new Set();
@@ -1554,15 +1700,36 @@ const TmxUploader = () => {
           }}
         >
           <div>
-            <h1 style={{ margin: 0, fontSize: "1.4em", fontWeight: "800" }}>
-              {activeMap ? activeMap.id : "No Map Loaded"}
-            </h1>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <h1 style={{ margin: 0, fontSize: "1.4em", fontWeight: "800" }}>
+                {activeMap ? activeMap.id : "No Map Loaded"}
+              </h1>
+              {activeMap && (
+                <button
+                  onClick={() => {
+                    setActiveMapId(null);
+                    setClickedCoord(null);
+                  }}
+                  style={{
+                    padding: "4px 10px",
+                    backgroundColor: theme.dangerBg,
+                    color: theme.dangerText,
+                    border: `1px solid ${theme.dangerBorder}`,
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    fontSize: "0.75em",
+                    fontWeight: "bold",
+                  }}
+                >
+                  Close Map
+                </button>
+              )}
+            </div>
             {activeMap && (
               <span
                 style={{ fontSize: "0.85em", opacity: 0.6, fontWeight: "500" }}
               >
-                Double click blue squares to jump maps | Hold Shift + Scroll to
-                Zoom
+                Double click portals to jump maps | Hold Shift + Scroll to Zoom
               </span>
             )}
           </div>
@@ -1712,8 +1879,38 @@ const TmxUploader = () => {
       </div>
 
       <div
+        onMouseDown={(e) => {
+          e.preventDefault();
+          setIsResizing(true);
+        }}
         style={{
-          width: "420px",
+          width: "12px",
+          flexShrink: 0,
+          cursor: "col-resize",
+          backgroundColor: isResizing ? theme.accent : "transparent",
+          transition: "background-color 0.2s",
+          borderRadius: "4px",
+          zIndex: 10,
+          margin: "0 -4px",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <div
+          style={{
+            width: "4px",
+            height: "40px",
+            backgroundColor: theme.border,
+            borderRadius: "2px",
+            opacity: 0.5,
+          }}
+        />
+      </div>
+
+      <div
+        style={{
+          width: `${sidebarWidth}px`,
           display: "flex",
           flexDirection: "column",
           flexShrink: 0,
@@ -1992,6 +2189,377 @@ const TmxUploader = () => {
                           }}
                         >
                           Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div
+                style={{
+                  border: `1px solid ${theme.border}`,
+                  borderRadius: "8px",
+                  padding: "12px",
+                  backgroundColor: theme.bg,
+                }}
+              >
+                <strong
+                  style={{
+                    display: "block",
+                    marginBottom: "8px",
+                    fontSize: "0.9em",
+                  }}
+                >
+                  Custom Warps
+                </strong>
+                <p
+                  style={{
+                    fontSize: "0.8em",
+                    opacity: 0.8,
+                    margin: "0 0 10px 0",
+                  }}
+                >
+                  Bridge map connections added by your mod.
+                </p>
+                <div
+                  style={{ display: "flex", gap: "4px", marginBottom: "4px" }}
+                >
+                  <input
+                    type="text"
+                    placeholder="From Map"
+                    value={warpFromMap}
+                    onChange={(e) => setWarpFromMap(e.target.value)}
+                    style={{
+                      flex: 2,
+                      minWidth: 0,
+                      padding: "6px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.inputBorder}`,
+                      borderRadius: "4px",
+                      fontSize: "0.8em",
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="X"
+                    value={warpFromX}
+                    onChange={(e) => setWarpFromX(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      padding: "6px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.inputBorder}`,
+                      borderRadius: "4px",
+                      fontSize: "0.8em",
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Y"
+                    value={warpFromY}
+                    onChange={(e) => setWarpFromY(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      padding: "6px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.inputBorder}`,
+                      borderRadius: "4px",
+                      fontSize: "0.8em",
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      if (clickedCoord) {
+                        setWarpFromMap(clickedCoord.mapId);
+                        setWarpFromX(clickedCoord.x);
+                        setWarpFromY(clickedCoord.y);
+                      } else {
+                        alert("Select a map coordinate tile first.");
+                      }
+                    }}
+                    style={{
+                      padding: "6px 10px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.border}`,
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "0.8em",
+                      fontWeight: "600",
+                    }}
+                  >
+                    Map
+                  </button>
+                </div>
+                <div
+                  style={{ display: "flex", gap: "4px", marginBottom: "10px" }}
+                >
+                  <input
+                    type="text"
+                    placeholder="To Map"
+                    value={warpToMap}
+                    onChange={(e) => setWarpToMap(e.target.value)}
+                    style={{
+                      flex: 2,
+                      minWidth: 0,
+                      padding: "6px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.inputBorder}`,
+                      borderRadius: "4px",
+                      fontSize: "0.8em",
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Dest X"
+                    value={warpToX}
+                    onChange={(e) => setWarpToX(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      padding: "6px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.inputBorder}`,
+                      borderRadius: "4px",
+                      fontSize: "0.8em",
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Dest Y"
+                    value={warpToY}
+                    onChange={(e) => setWarpToY(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      padding: "6px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.inputBorder}`,
+                      borderRadius: "4px",
+                      fontSize: "0.8em",
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      if (clickedCoord) {
+                        setWarpToMap(clickedCoord.mapId);
+                        setWarpToX(clickedCoord.x);
+                        setWarpToY(clickedCoord.y);
+                      } else {
+                        alert("Select a map coordinate tile first.");
+                      }
+                    }}
+                    style={{
+                      padding: "6px 10px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.border}`,
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "0.8em",
+                      fontWeight: "600",
+                    }}
+                  >
+                    Map
+                  </button>
+                  <button
+                    onClick={addCustomWarp}
+                    style={{
+                      padding: "6px 12px",
+                      backgroundColor: theme.accent,
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "0.8em",
+                      fontWeight: "bold",
+                    }}
+                  >
+                    Add
+                  </button>
+                </div>
+                {customWarps.length > 0 && (
+                  <div
+                    style={{
+                      maxHeight: "200px",
+                      overflowY: "auto",
+                      overflowX: "hidden",
+                      backgroundColor: theme.bg,
+                      borderRadius: "4px",
+                      padding: "4px",
+                      marginTop: "10px",
+                    }}
+                  >
+                    {customWarps.map((cw, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          padding: "8px 36px 8px 8px",
+                          borderBottom: `1px solid ${theme.border}`,
+                          marginBottom: "6px",
+                          backgroundColor: theme.panelBg,
+                          borderRadius: "4px",
+                          position: "relative",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "4px",
+                            marginBottom: "6px",
+                          }}
+                        >
+                          <input
+                            type="text"
+                            value={cw.fromMap}
+                            onChange={(e) =>
+                              updateCustomWarp(idx, "fromMap", e.target.value)
+                            }
+                            style={{
+                              flex: 2,
+                              minWidth: 0,
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                              fontSize: "0.8em",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            value={cw.fromX}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              updateCustomWarp(
+                                idx,
+                                "fromX",
+                                v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                              );
+                            }}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                              fontSize: "0.8em",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            value={cw.fromY}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              updateCustomWarp(
+                                idx,
+                                "fromY",
+                                v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                              );
+                            }}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                              fontSize: "0.8em",
+                            }}
+                          />
+                        </div>
+                        <div style={{ display: "flex", gap: "4px" }}>
+                          <input
+                            type="text"
+                            value={cw.targetMap}
+                            onChange={(e) =>
+                              updateCustomWarp(idx, "targetMap", e.target.value)
+                            }
+                            style={{
+                              flex: 2,
+                              minWidth: 0,
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                              fontSize: "0.8em",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            value={cw.destX}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              updateCustomWarp(
+                                idx,
+                                "destX",
+                                v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                              );
+                            }}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                              fontSize: "0.8em",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            value={cw.destY}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              updateCustomWarp(
+                                idx,
+                                "destY",
+                                v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                              );
+                            }}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                              fontSize: "0.8em",
+                            }}
+                          />
+                        </div>
+                        <button
+                          onClick={() => removeCustomWarp(idx)}
+                          style={{
+                            position: "absolute",
+                            top: "50%",
+                            right: "8px",
+                            transform: "translateY(-50%)",
+                            background: "none",
+                            border: "none",
+                            color: theme.dangerText,
+                            cursor: "pointer",
+                            fontWeight: "bold",
+                            fontSize: "1.1em",
+                            padding: "4px",
+                          }}
+                        >
+                          X
                         </button>
                       </div>
                     ))}
@@ -2316,6 +2884,46 @@ const TmxUploader = () => {
                   >
                     Map
                   </button>
+                  <button
+                    onClick={() => {
+                      const resolved = resolveMapId(homeMapId);
+                      if (resolved && !maps[resolved])
+                        setUnresolvedWarp(resolved);
+                      else if (!homeMapId) alert("Enter a Home Map ID first.");
+                      else alert("Home Map is loaded and linked.");
+                    }}
+                    style={{
+                      padding: "6px 10px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.border}`,
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "0.8em",
+                      fontWeight: "600",
+                    }}
+                  >
+                    Verify
+                  </button>
+                  <button
+                    onClick={() => {
+                      setHomeMapId("");
+                      setHomeX(0);
+                      setHomeY(0);
+                    }}
+                    style={{
+                      padding: "6px 10px",
+                      backgroundColor: theme.dangerBg,
+                      color: theme.dangerText,
+                      border: `1px solid ${theme.dangerBorder}`,
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "0.8em",
+                      fontWeight: "600",
+                    }}
+                  >
+                    Clear
+                  </button>
                 </div>
               </div>
 
@@ -2421,18 +3029,41 @@ const TmxUploader = () => {
                     Add Schedule leg
                   </strong>
                   {clickedCoord ? (
-                    <span
+                    <div
                       style={{
-                        fontSize: "0.75em",
-                        backgroundColor: theme.inputBg,
-                        padding: "3px 6px",
-                        borderRadius: "4px",
-                        fontFamily: "monospace",
-                        border: `1px solid ${theme.border}`,
+                        display: "flex",
+                        gap: "6px",
+                        alignItems: "center",
                       }}
                     >
-                      {clickedCoord.mapId} ({clickedCoord.x}, {clickedCoord.y})
-                    </span>
+                      <span
+                        style={{
+                          fontSize: "0.75em",
+                          backgroundColor: theme.inputBg,
+                          padding: "3px 6px",
+                          borderRadius: "4px",
+                          fontFamily: "monospace",
+                          border: `1px solid ${theme.border}`,
+                        }}
+                      >
+                        {clickedCoord.mapId} ({clickedCoord.x}, {clickedCoord.y}
+                        )
+                      </span>
+                      <button
+                        onClick={() => setClickedCoord(null)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: theme.dangerText,
+                          cursor: "pointer",
+                          fontSize: "1.1em",
+                          padding: 0,
+                          fontWeight: "bold",
+                        }}
+                      >
+                        X
+                      </button>
+                    </div>
                   ) : (
                     <span
                       style={{ fontSize: "0.75em", color: theme.dangerText }}
@@ -2650,234 +3281,271 @@ const TmxUploader = () => {
                       No schedule yet
                     </div>
                   )}
-                  {scheduleNodes.map((node, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        padding: "8px",
-                        borderBottom: `1px solid ${theme.border}`,
-                        fontSize: "0.85em",
-                        position: "relative",
-                        backgroundColor: theme.panelBg,
-                        borderRadius: "4px",
-                        marginBottom: "6px",
-                      }}
-                    >
+                  {scheduleNodes.map((node, idx) => {
+                    const arrival = getArrivalEstimate(idx);
+                    return (
                       <div
+                        key={idx}
                         style={{
-                          display: "flex",
-                          gap: "4px",
+                          padding: "8px",
+                          borderBottom: `1px solid ${theme.border}`,
+                          fontSize: "0.85em",
+                          position: "relative",
+                          backgroundColor: theme.panelBg,
+                          borderRadius: "4px",
                           marginBottom: "6px",
-                          paddingRight: "40px",
                         }}
                       >
-                        <input
-                          type="text"
-                          value={node.time}
-                          onChange={(e) =>
-                            updateScheduleNode(idx, "time", e.target.value)
-                          }
+                        <div
                           style={{
-                            width: "45px",
-                            padding: "4px",
-                            backgroundColor: theme.inputBg,
-                            color: theme.text,
-                            border: `1px solid ${theme.inputBorder}`,
-                            borderRadius: "4px",
-                          }}
-                        />
-                        <input
-                          type="text"
-                          value={node.mapId}
-                          onChange={(e) =>
-                            updateScheduleNode(idx, "mapId", e.target.value)
-                          }
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            padding: "4px",
-                            backgroundColor: theme.inputBg,
-                            color: theme.text,
-                            border: `1px solid ${theme.inputBorder}`,
-                            borderRadius: "4px",
-                          }}
-                        />
-                        <input
-                          type="text"
-                          value={node.x}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            updateScheduleNode(
-                              idx,
-                              "x",
-                              v === "" || v === "-" ? v : parseInt(v, 10) || 0
-                            );
-                          }}
-                          style={{
-                            width: "40px",
-                            padding: "4px",
-                            backgroundColor: theme.inputBg,
-                            color: theme.text,
-                            border: `1px solid ${theme.inputBorder}`,
-                            borderRadius: "4px",
-                          }}
-                        />
-                        <input
-                          type="text"
-                          value={node.y}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            updateScheduleNode(
-                              idx,
-                              "y",
-                              v === "" || v === "-" ? v : parseInt(v, 10) || 0
-                            );
-                          }}
-                          style={{
-                            width: "40px",
-                            padding: "4px",
-                            backgroundColor: theme.inputBg,
-                            color: theme.text,
-                            border: `1px solid ${theme.inputBorder}`,
-                            borderRadius: "4px",
-                          }}
-                        />
-                        <select
-                          value={node.direction}
-                          onChange={(e) =>
-                            updateScheduleNode(idx, "direction", e.target.value)
-                          }
-                          style={{
-                            width: "65px",
-                            padding: "4px",
-                            backgroundColor: theme.inputBg,
-                            color: theme.text,
-                            border: `1px solid ${theme.inputBorder}`,
-                            borderRadius: "4px",
+                            display: "flex",
+                            gap: "4px",
+                            marginBottom: "6px",
+                            paddingRight: "40px",
                           }}
                         >
-                          <option value="0">Up</option>
-                          <option value="1">Right</option>
-                          <option value="2">Down</option>
-                          <option value="3">Left</option>
-                        </select>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: "4px",
-                          paddingRight: "40px",
-                        }}
-                      >
-                        <input
-                          type="text"
-                          placeholder="Animation"
-                          value={node.animation}
-                          onChange={(e) =>
-                            updateScheduleNode(idx, "animation", e.target.value)
-                          }
+                          <input
+                            type="text"
+                            value={node.time}
+                            onChange={(e) =>
+                              updateScheduleNode(idx, "time", e.target.value)
+                            }
+                            style={{
+                              width: "45px",
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            value={node.mapId}
+                            onChange={(e) =>
+                              updateScheduleNode(idx, "mapId", e.target.value)
+                            }
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            value={node.x}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              updateScheduleNode(
+                                idx,
+                                "x",
+                                v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                              );
+                            }}
+                            style={{
+                              width: "40px",
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            value={node.y}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              updateScheduleNode(
+                                idx,
+                                "y",
+                                v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                              );
+                            }}
+                            style={{
+                              width: "40px",
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                            }}
+                          />
+                          <select
+                            value={node.direction}
+                            onChange={(e) =>
+                              updateScheduleNode(
+                                idx,
+                                "direction",
+                                e.target.value
+                              )
+                            }
+                            style={{
+                              width: "65px",
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                            }}
+                          >
+                            <option value="0">Up</option>
+                            <option value="1">Right</option>
+                            <option value="2">Down</option>
+                            <option value="3">Left</option>
+                          </select>
+                        </div>
+                        <div
                           style={{
-                            flex: 1,
-                            minWidth: 0,
-                            padding: "4px",
-                            backgroundColor: theme.inputBg,
-                            color: theme.text,
-                            border: `1px solid ${theme.inputBorder}`,
-                            borderRadius: "4px",
-                          }}
-                        />
-                        <input
-                          type="text"
-                          placeholder="Dialogue"
-                          value={node.dialogue}
-                          onChange={(e) =>
-                            updateScheduleNode(idx, "dialogue", e.target.value)
-                          }
-                          style={{
-                            flex: 2,
-                            minWidth: 0,
-                            padding: "4px",
-                            backgroundColor: theme.inputBg,
-                            color: theme.text,
-                            border: `1px solid ${theme.inputBorder}`,
-                            borderRadius: "4px",
-                          }}
-                        />
-                      </div>
-                      <div
-                        style={{
-                          marginTop: "6px",
-                          color: theme.successText,
-                          fontWeight: "bold",
-                          textAlign: "right",
-                          paddingRight: "40px",
-                        }}
-                      >
-                        {getArrivalEstimate(idx)}
-                      </div>
-                      <div
-                        style={{
-                          position: "absolute",
-                          top: "6px",
-                          right: "6px",
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: "2px",
-                        }}
-                      >
-                        <button
-                          onClick={() => removeScheduleNode(idx)}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            color: theme.dangerText,
-                            cursor: "pointer",
-                            fontSize: "1.2em",
-                            padding: 0,
-                            lineHeight: 1,
-                            marginBottom: "4px",
-                          }}
-                        >
-                          X
-                        </button>
-                        <button
-                          onClick={() => moveScheduleNode(idx, -1)}
-                          disabled={idx === 0}
-                          style={{
-                            background: theme.inputBg,
-                            border: `1px solid ${theme.border}`,
-                            color: theme.text,
-                            cursor: idx === 0 ? "not-allowed" : "pointer",
-                            padding: "2px",
-                            borderRadius: "2px",
-                            fontSize: "0.8em",
-                            opacity: idx === 0 ? 0.3 : 1,
-                          }}
-                        >
-                          ▲
-                        </button>
-                        <button
-                          onClick={() => moveScheduleNode(idx, 1)}
-                          disabled={idx === scheduleNodes.length - 1}
-                          style={{
-                            background: theme.inputBg,
-                            border: `1px solid ${theme.border}`,
-                            color: theme.text,
-                            cursor:
-                              idx === scheduleNodes.length - 1
-                                ? "not-allowed"
-                                : "pointer",
-                            padding: "2px",
-                            borderRadius: "2px",
-                            fontSize: "0.8em",
-                            opacity: idx === scheduleNodes.length - 1 ? 0.3 : 1,
+                            display: "flex",
+                            gap: "4px",
+                            paddingRight: "40px",
                           }}
                         >
-                          ▼
-                        </button>
+                          <input
+                            type="text"
+                            placeholder="Animation"
+                            value={node.animation}
+                            onChange={(e) =>
+                              updateScheduleNode(
+                                idx,
+                                "animation",
+                                e.target.value
+                              )
+                            }
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Dialogue"
+                            value={node.dialogue}
+                            onChange={(e) =>
+                              updateScheduleNode(
+                                idx,
+                                "dialogue",
+                                e.target.value
+                              )
+                            }
+                            style={{
+                              flex: 2,
+                              minWidth: 0,
+                              padding: "4px",
+                              backgroundColor: theme.inputBg,
+                              color: theme.text,
+                              border: `1px solid ${theme.inputBorder}`,
+                              borderRadius: "4px",
+                            }}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            marginTop: "6px",
+                            color: arrival.error
+                              ? theme.dangerText
+                              : theme.successText,
+                            fontWeight: "bold",
+                            display: "flex",
+                            justifyContent: "flex-end",
+                            alignItems: "center",
+                            gap: "8px",
+                            paddingRight: "40px",
+                          }}
+                        >
+                          <span>{arrival.msg}</span>
+                          {arrival.error && (
+                            <button
+                              onClick={() => handleFixLink(idx)}
+                              style={{
+                                padding: "2px 6px",
+                                backgroundColor: theme.dangerBg,
+                                color: theme.dangerText,
+                                border: `1px solid ${theme.dangerBorder}`,
+                                borderRadius: "4px",
+                                cursor: "pointer",
+                                fontSize: "0.8em",
+                              }}
+                            >
+                              Fix Link
+                            </button>
+                          )}
+                        </div>
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "6px",
+                            right: "6px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "2px",
+                          }}
+                        >
+                          <button
+                            onClick={() => removeScheduleNode(idx)}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: theme.dangerText,
+                              cursor: "pointer",
+                              fontSize: "1.2em",
+                              padding: 0,
+                              lineHeight: 1,
+                              marginBottom: "4px",
+                            }}
+                          >
+                            X
+                          </button>
+                          <button
+                            onClick={() => moveScheduleNode(idx, -1)}
+                            disabled={idx === 0}
+                            style={{
+                              background: theme.inputBg,
+                              border: `1px solid ${theme.border}`,
+                              color: theme.text,
+                              cursor: idx === 0 ? "not-allowed" : "pointer",
+                              padding: "2px",
+                              borderRadius: "2px",
+                              fontSize: "0.8em",
+                              opacity: idx === 0 ? 0.3 : 1,
+                            }}
+                          >
+                            ▲
+                          </button>
+                          <button
+                            onClick={() => moveScheduleNode(idx, 1)}
+                            disabled={idx === scheduleNodes.length - 1}
+                            style={{
+                              background: theme.inputBg,
+                              border: `1px solid ${theme.border}`,
+                              color: theme.text,
+                              cursor:
+                                idx === scheduleNodes.length - 1
+                                  ? "not-allowed"
+                                  : "pointer",
+                              padding: "2px",
+                              borderRadius: "2px",
+                              fontSize: "0.8em",
+                              opacity:
+                                idx === scheduleNodes.length - 1 ? 0.3 : 1,
+                            }}
+                          >
+                            ▼
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
