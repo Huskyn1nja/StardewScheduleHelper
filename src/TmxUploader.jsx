@@ -787,9 +787,19 @@ const TmxUploader = () => {
     setDraftDialogue("");
   };
 
-  const removeScheduleNode = (index) => {
+  const updateScheduleNode = (index, field, value) => {
     const newNodes = [...scheduleNodes];
-    newNodes.splice(index, 1);
+    newNodes[index] = { ...newNodes[index], [field]: value };
+    setSchedules((prev) => ({ ...prev, [activeScheduleKey]: newNodes }));
+  };
+
+  const moveScheduleNode = (index, direction) => {
+    if (index + direction < 0 || index + direction >= scheduleNodes.length)
+      return;
+    const newNodes = [...scheduleNodes];
+    const temp = newNodes[index];
+    newNodes[index] = newNodes[index + direction];
+    newNodes[index + direction] = temp;
     setSchedules((prev) => ({ ...prev, [activeScheduleKey]: newNodes }));
   };
 
@@ -2220,24 +2230,69 @@ const TmxUploader = () => {
                   NPC Home Location
                 </span>
                 <div
-                  style={{ display: "flex", gap: "8px", alignItems: "center" }}
+                  style={{ display: "flex", gap: "6px", alignItems: "center" }}
                 >
-                  <span
+                  <input
+                    type="text"
+                    placeholder="Map ID"
+                    value={homeMapId}
+                    onChange={(e) => setHomeMapId(e.target.value)}
                     style={{
-                      fontSize: "0.85em",
-                      flex: 1,
-                      fontFamily: "monospace",
-                      opacity: homeMapId ? 1 : 0.5,
-                      backgroundColor: theme.inputBg,
+                      flex: 2,
+                      width: 0,
                       padding: "6px",
-                      borderRadius: "4px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
                       border: `1px solid ${theme.inputBorder}`,
+                      borderRadius: "4px",
+                      fontSize: "0.85em",
+                      fontFamily: "monospace",
                     }}
-                  >
-                    {homeMapId
-                      ? `${homeMapId} (${homeX}, ${homeY})`
-                      : "Origin [0,0] assumed"}
-                  </span>
+                  />
+                  <input
+                    type="text"
+                    placeholder="X"
+                    value={homeX}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setHomeX(
+                        v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                      );
+                    }}
+                    style={{
+                      flex: 1,
+                      width: 0,
+                      padding: "6px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.inputBorder}`,
+                      borderRadius: "4px",
+                      fontSize: "0.85em",
+                      fontFamily: "monospace",
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Y"
+                    value={homeY}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setHomeY(
+                        v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                      );
+                    }}
+                    style={{
+                      flex: 1,
+                      width: 0,
+                      padding: "6px",
+                      backgroundColor: theme.inputBg,
+                      color: theme.text,
+                      border: `1px solid ${theme.inputBorder}`,
+                      borderRadius: "4px",
+                      fontSize: "0.85em",
+                      fontFamily: "monospace",
+                    }}
+                  />
                   <button
                     onClick={() => {
                       if (clickedCoord) {
@@ -2259,7 +2314,7 @@ const TmxUploader = () => {
                       fontWeight: "600",
                     }}
                   >
-                    Set Home
+                    Map
                   </button>
                 </div>
               </div>
@@ -2611,60 +2666,216 @@ const TmxUploader = () => {
                       <div
                         style={{
                           display: "flex",
-                          justifyContent: "space-between",
-                          paddingRight: "20px",
-                          marginBottom: "4px",
+                          gap: "4px",
+                          marginBottom: "6px",
+                          paddingRight: "40px",
                         }}
                       >
-                        <strong>
-                          {node.time} - {resolveMapId(node.mapId)}
-                        </strong>
-                        <span
+                        <input
+                          type="text"
+                          value={node.time}
+                          onChange={(e) =>
+                            updateScheduleNode(idx, "time", e.target.value)
+                          }
                           style={{
-                            color: theme.successText,
-                            fontWeight: "bold",
+                            width: "45px",
+                            padding: "4px",
+                            backgroundColor: theme.inputBg,
+                            color: theme.text,
+                            border: `1px solid ${theme.inputBorder}`,
+                            borderRadius: "4px",
+                          }}
+                        />
+                        <input
+                          type="text"
+                          value={node.mapId}
+                          onChange={(e) =>
+                            updateScheduleNode(idx, "mapId", e.target.value)
+                          }
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            padding: "4px",
+                            backgroundColor: theme.inputBg,
+                            color: theme.text,
+                            border: `1px solid ${theme.inputBorder}`,
+                            borderRadius: "4px",
+                          }}
+                        />
+                        <input
+                          type="text"
+                          value={node.x}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            updateScheduleNode(
+                              idx,
+                              "x",
+                              v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                            );
+                          }}
+                          style={{
+                            width: "40px",
+                            padding: "4px",
+                            backgroundColor: theme.inputBg,
+                            color: theme.text,
+                            border: `1px solid ${theme.inputBorder}`,
+                            borderRadius: "4px",
+                          }}
+                        />
+                        <input
+                          type="text"
+                          value={node.y}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            updateScheduleNode(
+                              idx,
+                              "y",
+                              v === "" || v === "-" ? v : parseInt(v, 10) || 0
+                            );
+                          }}
+                          style={{
+                            width: "40px",
+                            padding: "4px",
+                            backgroundColor: theme.inputBg,
+                            color: theme.text,
+                            border: `1px solid ${theme.inputBorder}`,
+                            borderRadius: "4px",
+                          }}
+                        />
+                        <select
+                          value={node.direction}
+                          onChange={(e) =>
+                            updateScheduleNode(idx, "direction", e.target.value)
+                          }
+                          style={{
+                            width: "65px",
+                            padding: "4px",
+                            backgroundColor: theme.inputBg,
+                            color: theme.text,
+                            border: `1px solid ${theme.inputBorder}`,
+                            borderRadius: "4px",
                           }}
                         >
-                          {getArrivalEstimate(idx)}
-                        </span>
+                          <option value="0">Up</option>
+                          <option value="1">Right</option>
+                          <option value="2">Down</option>
+                          <option value="3">Left</option>
+                        </select>
                       </div>
-                      <div style={{ opacity: 0.8 }}>
-                        Map Coords: [{node.x}, {node.y}] | Facing:{" "}
-                        {
-                          ["Up", "Right", "Down", "Left"][
-                            parseInt(node.direction, 10)
-                          ]
-                        }{" "}
-                        {node.animation && `| Anim: ${node.animation}`}
-                      </div>
-                      {node.dialogue && (
-                        <div
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "4px",
+                          paddingRight: "40px",
+                        }}
+                      >
+                        <input
+                          type="text"
+                          placeholder="Animation"
+                          value={node.animation}
+                          onChange={(e) =>
+                            updateScheduleNode(idx, "animation", e.target.value)
+                          }
                           style={{
-                            marginTop: "4px",
-                            color: theme.warningText,
-                            fontStyle: "italic",
+                            flex: 1,
+                            minWidth: 0,
+                            padding: "4px",
+                            backgroundColor: theme.inputBg,
+                            color: theme.text,
+                            border: `1px solid ${theme.inputBorder}`,
+                            borderRadius: "4px",
                           }}
-                        >
-                          "{node.dialogue}"
-                        </div>
-                      )}
-                      <button
-                        onClick={() => removeScheduleNode(idx)}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Dialogue"
+                          value={node.dialogue}
+                          onChange={(e) =>
+                            updateScheduleNode(idx, "dialogue", e.target.value)
+                          }
+                          style={{
+                            flex: 2,
+                            minWidth: 0,
+                            padding: "4px",
+                            backgroundColor: theme.inputBg,
+                            color: theme.text,
+                            border: `1px solid ${theme.inputBorder}`,
+                            borderRadius: "4px",
+                          }}
+                        />
+                      </div>
+                      <div
+                        style={{
+                          marginTop: "6px",
+                          color: theme.successText,
+                          fontWeight: "bold",
+                          textAlign: "right",
+                          paddingRight: "40px",
+                        }}
+                      >
+                        {getArrivalEstimate(idx)}
+                      </div>
+                      <div
                         style={{
                           position: "absolute",
                           top: "6px",
                           right: "6px",
-                          background: "none",
-                          border: "none",
-                          color: theme.dangerText,
-                          cursor: "pointer",
-                          fontSize: "1.2em",
-                          padding: 0,
-                          lineHeight: 1,
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "2px",
                         }}
                       >
-                        X
-                      </button>
+                        <button
+                          onClick={() => removeScheduleNode(idx)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: theme.dangerText,
+                            cursor: "pointer",
+                            fontSize: "1.2em",
+                            padding: 0,
+                            lineHeight: 1,
+                            marginBottom: "4px",
+                          }}
+                        >
+                          X
+                        </button>
+                        <button
+                          onClick={() => moveScheduleNode(idx, -1)}
+                          disabled={idx === 0}
+                          style={{
+                            background: theme.inputBg,
+                            border: `1px solid ${theme.border}`,
+                            color: theme.text,
+                            cursor: idx === 0 ? "not-allowed" : "pointer",
+                            padding: "2px",
+                            borderRadius: "2px",
+                            fontSize: "0.8em",
+                            opacity: idx === 0 ? 0.3 : 1,
+                          }}
+                        >
+                          ▲
+                        </button>
+                        <button
+                          onClick={() => moveScheduleNode(idx, 1)}
+                          disabled={idx === scheduleNodes.length - 1}
+                          style={{
+                            background: theme.inputBg,
+                            border: `1px solid ${theme.border}`,
+                            color: theme.text,
+                            cursor:
+                              idx === scheduleNodes.length - 1
+                                ? "not-allowed"
+                                : "pointer",
+                            padding: "2px",
+                            borderRadius: "2px",
+                            fontSize: "0.8em",
+                            opacity: idx === scheduleNodes.length - 1 ? 0.3 : 1,
+                          }}
+                        >
+                          ▼
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
