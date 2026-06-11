@@ -57,10 +57,8 @@ const TmxUploader = () => {
   const [homeX, setHomeX] = useState(0);
   const [homeY, setHomeY] = useState(0);
 
-  const [schedules, setSchedules] = useState({
-    default: [],
-  });
-  const [activeScheduleKey, setActiveScheduleKey] = useState("default");
+  const [schedules, setSchedules] = useState({ Mon: [] });
+  const [activeScheduleKey, setActiveScheduleKey] = useState("Mon");
   const [newScheduleInput, setNewScheduleInput] = useState("");
   const [importInput, setImportInput] = useState("");
 
@@ -571,6 +569,11 @@ const TmxUploader = () => {
     }
 
     const newSchedules = { ...schedules };
+    if (newSchedules["Mon"] && newSchedules["Mon"].length === 0)
+      delete newSchedules["Mon"];
+    if (newSchedules["default"] && newSchedules["default"].length === 0)
+      delete newSchedules["default"];
+
     let importedCount = 0;
 
     if (parsedJson && typeof parsedJson === "object") {
@@ -608,7 +611,8 @@ const TmxUploader = () => {
       }
     } else {
       const lines = cleanInput.split("\n");
-      let currentKey = activeScheduleKey;
+      let currentKey =
+        activeScheduleKey === "default" ? "Mon" : activeScheduleKey;
 
       lines.forEach((line) => {
         const lineTrimmed = line.trim();
@@ -685,6 +689,7 @@ const TmxUploader = () => {
       );
     }
   };
+
   const handleTimeBlur = () => {
     let timeInt = parseInt(draftTime.replace(/\D/g, ""), 10);
     if (isNaN(timeInt)) {
