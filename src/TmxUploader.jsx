@@ -571,14 +571,15 @@ const TmxUploader = () => {
     const newSchedules = { ...schedules };
     if (newSchedules["Mon"] && newSchedules["Mon"].length === 0)
       delete newSchedules["Mon"];
-    if (newSchedules["default"] && newSchedules["default"].length === 0)
-      delete newSchedules["default"];
+    if (newSchedules["default"]) delete newSchedules["default"];
 
     let importedCount = 0;
 
     if (parsedJson && typeof parsedJson === "object") {
-      for (const [key, value] of Object.entries(parsedJson)) {
+      for (let [key, value] of Object.entries(parsedJson)) {
         if (typeof value !== "string") continue;
+        if (key.toLowerCase() === "default") key = "Mon";
+
         const nodes = [];
         const entries = value.split("/");
         entries.forEach((entry) => {
@@ -612,7 +613,9 @@ const TmxUploader = () => {
     } else {
       const lines = cleanInput.split("\n");
       let currentKey =
-        activeScheduleKey === "default" ? "Mon" : activeScheduleKey;
+        activeScheduleKey.toLowerCase() === "default"
+          ? "Mon"
+          : activeScheduleKey;
 
       lines.forEach((line) => {
         const lineTrimmed = line.trim();
@@ -627,7 +630,8 @@ const TmxUploader = () => {
             .trim()
             .replace(/['"]/g, "");
           if (possibleKey && !/^\d+$/.test(possibleKey)) {
-            currentKey = possibleKey;
+            currentKey =
+              possibleKey.toLowerCase() === "default" ? "Mon" : possibleKey;
             scheduleData = lineTrimmed
               .substring(colonIndex + 1)
               .trim()
@@ -675,11 +679,14 @@ const TmxUploader = () => {
 
     if (importedCount > 0) {
       setSchedules(newSchedules);
-      if (
-        Object.keys(newSchedules).length > 0 &&
-        !newSchedules[activeScheduleKey]
-      ) {
-        setActiveScheduleKey(Object.keys(newSchedules)[0]);
+      const keys = Object.keys(newSchedules);
+      if (keys.length > 0) {
+        if (
+          !newSchedules[activeScheduleKey] ||
+          activeScheduleKey.toLowerCase() === "default"
+        ) {
+          setActiveScheduleKey(keys.includes("Mon") ? "Mon" : keys[0]);
+        }
       }
       setImportInput("");
       alert(`Imported ${importedCount} checkpoints successfully!`);
