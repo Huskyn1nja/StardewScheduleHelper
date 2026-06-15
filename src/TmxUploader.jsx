@@ -1031,6 +1031,11 @@ const TmxUploader = () => {
     setSchedules((prev) => ({ ...prev, [activeScheduleKey]: newNodes }));
   };
 
+  const removeScheduleNode = (index) => {
+    const newNodes = scheduleNodes.filter((_, i) => i !== index);
+    setSchedules((prev) => ({ ...prev, [activeScheduleKey]: newNodes }));
+  };
+
   const addAlias = () => {
     if (aliasInternal.trim() && aliasFile.trim()) {
       setMapAliases((prev) => ({
